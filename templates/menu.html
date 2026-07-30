@@ -1,0 +1,1 @@
+{% extends 'base.html' %}{% block content %}<section class="page-heading"><p class="eyebrow">OUR MENU</p><h1>Find your next favourite meal</h1><input class="search" id="foodSearch" placeholder="Search food by name..." autofocus></section><div class="food-grid" id="foodGrid">{% for food in foods %}{% include '_food_card.html' %}{% endfor %}</div>{% endblock %}
