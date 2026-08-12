@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(120) NOT NULL UNIQUE,
     phone VARCHAR(20) NOT NULL,
     password VARCHAR(255) NOT NULL,
-    role ENUM('customer', 'admin') NOT NULL DEFAULT 'customer',
+    role ENUM('customer', 'admin', 'delivery_person') NOT NULL DEFAULT 'customer',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -37,7 +37,10 @@ CREATE TABLE IF NOT EXISTS orders (
     total_amount DECIMAL(10,2) NOT NULL,
     order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     status ENUM('Pending', 'Preparing', 'Delivered') NOT NULL DEFAULT 'Pending',
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    delivery_person_id INT NULL,
+    delivery_status ENUM('Not Assigned', 'Assigned', 'Out for Delivery', 'Delivered') NOT NULL DEFAULT 'Not Assigned',
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_orders_delivery_person FOREIGN KEY (delivery_person_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS order_items (

@@ -12,7 +12,9 @@ A simple, beginner-friendly online food delivery application for a college DBMS 
 
 **Customer:** registration, login/logout, menu search, food details, cart quantity updates, checkout, order history, and profile update.
 
-**Admin:** separate login, dashboard, food CRUD, customer list, order list, and status updates (Pending, Preparing, Delivered).
+**Admin:** separate login, dashboard, food CRUD, customer list, order list, delivery-person assignment, and status updates (Pending, Preparing, Delivered).
+
+**Delivery personnel:** dedicated login, assigned-order dashboard, and delivery progress updates (Assigned, Out for Delivery, Delivered). Marking a delivery as delivered updates the customer order as delivered too.
 
 ## Technology Stack
 
@@ -61,6 +63,7 @@ Python 3.10+, Docker Desktop (recommended), and a browser. MySQL can be installe
 |---|---|---|
 | Admin | admin@example.com | admin123 |
 | Customer | customer@example.com | customer123 |
+| Delivery person | rider@example.com | rider123 |
 
 ## Folder Structure
 

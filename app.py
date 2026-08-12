@@ -2,6 +2,8 @@ from functools import wraps
 import mysql.connector
 from mysql.connector import Error
 from flask import Flask, flash, redirect, render_template, request, session, url_for
+from werkzeug.security import generate_password_hash, check_password_hash
+import hashlib
 from config import Config
 
 app = Flask(__name__)
@@ -14,7 +16,7 @@ def db_connection():
         host=app.config['MYSQL_HOST'], port=app.config['MYSQL_PORT'],
         user=app.config['MYSQL_USER'], password=app.config['MYSQL_PASSWORD'],
         database=app.config['MYSQL_DATABASE']
-    )
+)
 
 
 def customer_required(view):
@@ -35,6 +37,24 @@ def admin_required(view):
             return redirect(url_for('admin_login'))
         return view(*args, **kwargs)
     return wrapped
+
+
+def delivery_required(view):
+    """Allow access only to logged-in delivery personnel."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if session.get('role') != 'delivery_person':
+            flash('Please log in as delivery personnel first.', 'error')
+            return redirect(url_for('delivery_login'))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def password_matches(stored_password, entered_password):
+    """Verify stored hashes; supports the SHA-256 hashes in sample_data.sql."""
+    if stored_password.startswith('sha256$'):
+        return stored_password[7:] == hashlib.sha256(entered_password.encode()).hexdigest()
+    return check_password_hash(stored_password, entered_password)
 
 
 def query(sql, values=(), one=False):
@@ -58,12 +78,13 @@ def register():
     if request.method == 'POST':
         name, email = request.form.get('full_name', '').strip(), request.form.get('email', '').strip().lower()
         phone, password = request.form.get('phone', '').strip(), request.form.get('password', '')
+        hashed_password = generate_password_hash(password)
         if not all([name, email, phone, password]):
             flash('Please complete every field.', 'error')
         else:
             try:
                 conn = db_connection(); cur = conn.cursor()
-                cur.execute('INSERT INTO users (full_name,email,phone,password) VALUES (%s,%s,%s,%s)', (name,email,phone,password))
+                cur.execute('INSERT INTO users (full_name,email,phone,password) VALUES (%s,%s,%s,%s)', (name,email,phone,hashed_password))
                 conn.commit(); cur.close(); conn.close()
                 flash('Registration successful. Please log in.', 'success')
                 return redirect(url_for('login'))
@@ -75,8 +96,10 @@ def register():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        user = query("SELECT * FROM users WHERE email=%s AND password=%s AND role='customer'", (request.form.get('email'), request.form.get('password')), one=True)
-        if user:
+        email=request.form.get('email')
+        password=request.form.get('password')
+        user=query("SELECT * FROM users WHERE email=%s AND role='customer'",(email,),one=True)
+        if user and password_matches(user['password'], password):
             session.update(user_id=user['id'], user_name=user['full_name'], role='customer')
             return redirect(url_for('dashboard'))
         flash('Invalid customer email or password.', 'error')
@@ -86,12 +109,27 @@ def login():
 @app.route('/admin/login', methods=['GET', 'POST'])
 def admin_login():
     if request.method == 'POST':
-        user = query("SELECT * FROM users WHERE email=%s AND password=%s AND role='admin'", (request.form.get('email'), request.form.get('password')), one=True)
-        if user:
+        email=request.form.get('email')
+        password=request.form.get('password')
+        user=query("SELECT * FROM users WHERE email=%s AND role='admin'",(email,),one=True)
+        if user and password_matches(user['password'], password):
             session.update(user_id=user['id'], user_name=user['full_name'], role='admin')
             return redirect(url_for('admin_dashboard'))
         flash('Invalid admin email or password.', 'error')
     return render_template('admin_login.html')
+
+
+@app.route('/delivery/login', methods=['GET', 'POST'])
+def delivery_login():
+    if request.method == 'POST':
+        email = request.form.get('email')
+        password = request.form.get('password', '')
+        user = query("SELECT * FROM users WHERE email=%s AND role='delivery_person'", (email,), one=True)
+        if user and password_matches(user['password'], password):
+            session.update(user_id=user['id'], user_name=user['full_name'], role='delivery_person')
+            return redirect(url_for('delivery_dashboard'))
+        flash('Invalid delivery personnel email or password.', 'error')
+    return render_template('delivery_login.html')
 
 
 @app.route('/logout')
@@ -250,7 +288,10 @@ def delete_food(food_id):
 
 @app.route('/admin/orders')
 @admin_required
-def admin_orders(): return render_template('admin/orders.html', orders=query('SELECT orders.*, users.full_name, users.phone FROM orders JOIN users ON orders.user_id=users.id ORDER BY order_date DESC'))
+def admin_orders():
+    orders_list = query('SELECT orders.*, users.full_name, users.phone, rider.full_name AS rider_name FROM orders JOIN users ON orders.user_id=users.id LEFT JOIN users AS rider ON orders.delivery_person_id=rider.id ORDER BY order_date DESC')
+    riders = query("SELECT id, full_name, phone FROM users WHERE role='delivery_person' ORDER BY full_name")
+    return render_template('admin/orders.html', orders=orders_list, riders=riders)
 
 
 @app.route('/admin/orders/<int:order_id>/status', methods=['POST'])
@@ -260,6 +301,46 @@ def order_status(order_id):
     if status in ['Pending','Preparing','Delivered']:
         conn=db_connection();cur=conn.cursor();cur.execute('UPDATE orders SET status=%s WHERE id=%s',(status,order_id));conn.commit();cur.close();conn.close();flash('Order status updated.','success')
     return redirect(url_for('admin_orders'))
+
+
+@app.route('/admin/orders/<int:order_id>/assign', methods=['POST'])
+@admin_required
+def assign_delivery(order_id):
+    rider_id = request.form.get('delivery_person_id', type=int)
+    rider = query("SELECT id FROM users WHERE id=%s AND role='delivery_person'", (rider_id,), one=True) if rider_id else None
+    if not rider:
+        flash('Choose a valid delivery person.', 'error')
+    else:
+        conn = db_connection(); cur = conn.cursor()
+        cur.execute("UPDATE orders SET delivery_person_id=%s, delivery_status='Assigned' WHERE id=%s", (rider_id, order_id))
+        conn.commit(); cur.close(); conn.close()
+        flash('Delivery person assigned successfully.', 'success')
+    return redirect(url_for('admin_orders'))
+
+
+@app.route('/delivery')
+@delivery_required
+def delivery_dashboard():
+    assigned_orders = query('SELECT orders.*, users.full_name, users.phone FROM orders JOIN users ON orders.user_id=users.id WHERE orders.delivery_person_id=%s ORDER BY orders.order_date DESC', (session['user_id'],))
+    return render_template('delivery_dashboard.html', orders=assigned_orders)
+
+
+@app.route('/delivery/orders/<int:order_id>/status', methods=['POST'])
+@delivery_required
+def delivery_status(order_id):
+    status = request.form.get('delivery_status')
+    allowed_statuses = ['Assigned', 'Out for Delivery', 'Delivered']
+    if status not in allowed_statuses:
+        flash('Invalid delivery status.', 'error')
+        return redirect(url_for('delivery_dashboard'))
+    conn = db_connection(); cur = conn.cursor()
+    if status == 'Delivered':
+        cur.execute("UPDATE orders SET delivery_status=%s, status='Delivered' WHERE id=%s AND delivery_person_id=%s", (status, order_id, session['user_id']))
+    else:
+        cur.execute('UPDATE orders SET delivery_status=%s WHERE id=%s AND delivery_person_id=%s', (status, order_id, session['user_id']))
+    conn.commit(); cur.close(); conn.close()
+    flash('Delivery status updated.', 'success')
+    return redirect(url_for('delivery_dashboard'))
 
 
 @app.route('/admin/customers')
